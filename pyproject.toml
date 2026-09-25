@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fno-research"
+version = "0.1.0"
+description = "Multi-agent research pipeline for Indian index futures and options"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=1.8",
+    "kiteconnect>=5.2",
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "pydantic>=2.6",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dashboard = ["streamlit>=1.40", "plotly>=5.20"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+fno-research = "fno_research.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
