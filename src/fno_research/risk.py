@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from datetime import date
 
-from fno_research.config import RiskLimits
+from fno_research.config import NSE_INDEX_NAMES, RiskLimits
 from fno_research.models import (
     AggregateSignal,
     MarketContext,
@@ -58,7 +58,7 @@ class RiskEngine:
     def evaluate(self, idea: TradeIdea, view: AggregateSignal, chain: OptionChain,
                  context: MarketContext | None = None, margin: MarginInfo | None = None,
                  kill_switch: dict | None = None, today: date | None = None,
-                 open_positions: int = 0) -> RiskDecision:
+                 open_positions: int = 0, banned: set[str] | None = None) -> RiskDecision:
         today = today or chain.as_of.date()
         lim = self.limits
         margin = margin or estimate_margin(idea, lim.capital)
@@ -66,7 +66,16 @@ class RiskEngine:
         kill = kill_switch or {"active": False}
         regime = context.vol_regime if context else "unknown"
 
+        if idea.underlying in NSE_INDEX_NAMES:
+            ban_ok, ban_detail = True, "Index options are never in the F&O ban period"
+        elif banned is None:
+            ban_ok, ban_detail = False, "Ban list unavailable; not trading a stock blind"
+        else:
+            ban_ok = idea.underlying not in banned
+            ban_detail = "In today's F&O ban period" if not ban_ok else "Not in the ban period"
+
         checks = [
+            RiskCheck(name="F&O ban list", passed=ban_ok, detail=ban_detail),
             RiskCheck(
                 name="Kill switch",
                 passed=not kill.get("active"),

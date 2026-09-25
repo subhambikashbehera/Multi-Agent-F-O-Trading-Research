@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 from fno_research.agents.base import make_signal
+from fno_research.analytics.buildup import oi_buildup
 from fno_research.analytics.options import (
     atm_iv,
     fill_implied_vols,
@@ -38,6 +39,7 @@ class OptionsPositioningAgent:
         walls = oi_walls(chain)
         iv = atm_iv(chain)
         skew = iv_skew(chain)
+        buildup = oi_buildup(chain)
 
         # PCR: heavy put writing (>1) is read as support, i.e. bullish; very high is crowded.
         if math.isnan(ratio):
@@ -66,10 +68,11 @@ class OptionsPositioningAgent:
         pain_vote = max(-1.0, min(1.0, (pain - spot) / (0.01 * spot)))
 
         votes = {
-            "pcr": (pcr_vote, 0.30),
-            "oi_flow": (flow_vote, 0.30),
-            "range_position": (range_vote, 0.25),
-            "max_pain_pull": (pain_vote, 0.15),
+            "pcr": (pcr_vote, 0.25),
+            "oi_flow": (flow_vote, 0.20),
+            "oi_buildup": (buildup.score, 0.25),
+            "range_position": (range_vote, 0.20),
+            "max_pain_pull": (pain_vote, 0.10),
         }
         score = sum(v * w for v, w in votes.values())
         agree = sum(w for v, w in votes.values() if v * score > 0)
@@ -81,7 +84,7 @@ class OptionsPositioningAgent:
             f"PCR {ratio:.2f}; put wall {walls.put_wall:,.0f} / call wall "
             f"{walls.call_wall:,.0f} with spot {spot:,.0f}; fresh OI puts "
             f"{walls.put_oi_added:+,.0f} vs calls {walls.call_oi_added:+,.0f}; "
-            f"max pain {pain:,.0f}"
+            f"max pain {pain:,.0f}; calls: {buildup.call_state}, puts: {buildup.put_state}"
             + (f"; ATM IV {iv * 100:.1f}%" if iv else "")
             + (f", skew {skew * 100:+.1f} pts" if skew is not None else "")
             + "."
@@ -91,5 +94,6 @@ class OptionsPositioningAgent:
             pcr_value=round(ratio, 3), max_pain=pain, put_wall=walls.put_wall,
             call_wall=walls.call_wall, atm_iv=round(iv, 4) if iv else None,
             iv_skew=round(skew, 4) if skew is not None else None,
+            call_buildup=buildup.call_state, put_buildup=buildup.put_state,
         )
         return make_signal(self.name, score, confidence, rationale, features, self.group)

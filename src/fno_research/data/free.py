@@ -45,3 +45,6 @@ class FreeWebProvider:
 
     def fii_dii(self) -> FlowSnapshot | None:
         return self.nse.fii_dii()
+
+    def ban_list(self) -> set[str]:
+        return self.nse.ban_list()

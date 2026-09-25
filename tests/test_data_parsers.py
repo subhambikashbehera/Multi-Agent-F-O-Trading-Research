@@ -7,6 +7,7 @@ import pytest
 from fno_research.data.news import google_news_url, parse_rss
 from fno_research.data.nse import (
     parse_all_indices,
+    parse_ban_list,
     parse_fii_dii,
     parse_option_chain,
 )
@@ -17,7 +18,7 @@ def nse_leg(strike, opt, ltp, oi, iv=13.5):
     return {
         "strikePrice": strike, "expiryDate": "30-Sep-2026", "underlying": "NIFTY",
         "openInterest": oi, "changeinOpenInterest": oi // 10, "totalTradedVolume": 5000,
-        "impliedVolatility": iv, "lastPrice": ltp, "bidprice": ltp - 0.5,
+        "impliedVolatility": iv, "lastPrice": ltp, "change": -3.5, "bidprice": ltp - 0.5,
         "askPrice": ltp + 0.5, "underlyingValue": 25_012.4,
     }
 
@@ -47,6 +48,7 @@ def test_parse_nse_option_chain(monkeypatch):
     assert q.oi == (1000 + 25_000 % 700) * 65  # contracts -> units
     assert q.iv == pytest.approx(0.135)
     assert q.bid < q.last_price < q.ask
+    assert q.price_change == -3.5
     assert chain.as_of.hour == 11
 
 
@@ -118,3 +120,9 @@ def test_parse_rss_google_news_source():
 def test_google_news_url_is_per_underlying():
     assert "Bank+Nifty" in google_news_url("BANKNIFTY")
     assert "when%3A1d" in google_news_url("NIFTY")
+
+
+def test_parse_ban_list():
+    text = "Securities in Ban For Trade Date 25-SEP-2026:\n1,RBLBANK\n2,manappuram\n"
+    assert parse_ban_list(text) == {"RBLBANK", "MANAPPURAM"}
+    assert parse_ban_list("Securities in Ban For Trade Date 25-SEP-2026: NIL\n") == set()

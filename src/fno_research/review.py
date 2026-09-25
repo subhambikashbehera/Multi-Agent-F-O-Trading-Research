@@ -86,3 +86,33 @@ class ReviewQueue:
         row = self.conn.execute("SELECT payload FROM reports WHERE id = ?",
                                 (report_id,)).fetchone()
         return ResearchReport.model_validate_json(row[0])
+
+
+def decision_log(queue: ReviewQueue, book, limit: int = 200) -> list[dict]:
+    """Every run with its decision and, for approved ideas, the paper outcome so far."""
+    positions = {p["report_id"]: p for p in book.positions()}
+    log = []
+    for row in queue.list(limit=limit):
+        report: ResearchReport = row["report"]
+        pos = positions.get(row["id"])
+        if pos is None:
+            outcome, pnl = "", None
+        elif pos["status"] == "closed":
+            outcome, pnl = "closed", pos["realized_pnl"]
+        else:
+            outcome, pnl = "open", pos["unrealized_pnl"]
+        log.append({
+            "time": row["created_at"][:16],
+            "id": row["id"],
+            "underlying": row["underlying"],
+            "status": row["status"],
+            "direction": report.aggregate.direction.value,
+            "score": report.aggregate.score,
+            "allocation": report.aggregate.allocation_multiplier,
+            "veto": report.aggregate.veto,
+            "strategy": report.idea.strategy if report.idea else "",
+            "note": row["reviewer_note"] or "",
+            "paper": outcome,
+            "pnl": round(pnl, 2) if pnl is not None else None,
+        })
+    return log

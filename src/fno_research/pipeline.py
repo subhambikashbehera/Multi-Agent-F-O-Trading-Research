@@ -21,7 +21,7 @@ from fno_research.agents.base import make_signal
 from fno_research.aggregator import aggregate
 from fno_research.analytics.indicators import candles_to_frame
 from fno_research.analytics.regime import expiry_tag, vol_regime
-from fno_research.config import Settings
+from fno_research.config import NSE_INDEX_NAMES, Settings
 from fno_research.data.base import FlowsProvider, MarketDataProvider, NewsProvider
 from fno_research.models import (
     AgentSignal,
@@ -112,6 +112,19 @@ class ResearchPipeline:
             log.info("Broker margin check failed, using estimate: %s", exc)
             return None
 
+    def _ban_list(self, underlying: str) -> set[str] | None:
+        if underlying in NSE_INDEX_NAMES:
+            return None  # indices are never banned; skip the fetch
+        fetch = getattr(self.market, "ban_list", None) or getattr(self.flows_provider,
+                                                                   "ban_list", None)
+        if fetch is None:
+            return None
+        try:
+            return fetch()
+        except Exception as exc:
+            log.info("Ban list unavailable: %s", exc)
+            return None
+
     def run(self, underlying: str) -> ResearchReport:
         underlying = underlying.upper()
         signals = self._technical(underlying)
@@ -161,7 +174,8 @@ class ResearchPipeline:
                     if self.paper is not None else 0
                 )
                 risk = self.risk.evaluate(idea, view, chain, context, self._margin(idea), kill,
-                                          open_positions=open_here)
+                                          open_positions=open_here,
+                                          banned=self._ban_list(underlying))
 
         try:
             spot = chain.spot if chain else self.market.spot(underlying)

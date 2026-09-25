@@ -12,11 +12,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from fno_research.analytics.buildup import oi_buildup
 from fno_research.config import SUPPORTED_UNDERLYINGS, Settings
 from fno_research.factory import build_market, build_pipeline
 from fno_research.models import Direction, OptionChain, ResearchReport, TradeIdea
 from fno_research.paper import PaperBook
-from fno_research.review import BLOCKED, NO_TRADE, PENDING, ReviewQueue
+from fno_research.review import BLOCKED, NO_TRADE, PENDING, ReviewQueue, decision_log
 
 st.set_page_config(page_title="F&O Research Desk", layout="wide")
 
@@ -210,6 +211,17 @@ def show_report(report: ResearchReport, chain: OptionChain | None, source: str) 
     if chain is not None:
         st.subheader(f"Option chain OI · expiry {chain.expiry:%d %b %Y} · lot {chain.lot_size}")
         st.plotly_chart(oi_chart(chain), use_container_width=True)
+        buildup = oi_buildup(chain)
+        st.markdown(f"**OI build-up near the money** · calls: {buildup.call_state} · "
+                    f"puts: {buildup.put_state} · read {buildup.score:+.2f}")
+        with st.expander("Per-strike build-up"):
+            table = pd.DataFrame(buildup.rows).pivot(
+                index="strike", columns="side", values="state"
+            ).rename(columns={"CE": "Calls", "PE": "Puts"})
+            st.dataframe(table, use_container_width=True)
+            st.caption("Price up + OI up = long build-up · price down + OI up = short "
+                       "build-up · price up + OI down = short covering · price down + OI "
+                       "down = long unwinding. Put writing is bullish, call writing bearish.")
 
     if report.idea:
         idea = report.idea
@@ -283,22 +295,15 @@ def review_tab(queue: ReviewQueue, book: PaperBook) -> None:
                 st.rerun()
 
     st.subheader("Signal and decision log")
-    history = [
-        {
-            "time": row["created_at"][:16],
-            "underlying": row["underlying"],
-            "status": row["status"],
-            "direction": row["report"].aggregate.direction.value,
-            "score": row["report"].aggregate.score,
-            "allocation": row["report"].aggregate.allocation_multiplier,
-            "veto": row["report"].aggregate.veto,
-            "strategy": row["report"].idea.strategy if row["report"].idea else "",
-            "note": row["reviewer_note"] or "",
-        }
-        for row in queue.list(limit=200)
-    ]
-    if history:
-        st.dataframe(pd.DataFrame(history), hide_index=True, use_container_width=True)
+    log = decision_log(queue, book)
+    if log:
+        traded = [r for r in log if r["paper"] == "closed"]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Runs logged", len(log))
+        c2.metric("Approved → paper", sum(1 for r in log if r["paper"]))
+        c3.metric("Closed trades won",
+                  f"{sum(1 for r in traded if r['pnl'] > 0)}/{len(traded)}" if traded else "—")
+        st.dataframe(pd.DataFrame(log), hide_index=True, use_container_width=True)
 
 
 # -- paper tab -----------------------------------------------------------------------------

@@ -17,6 +17,7 @@ from fno_research.models import FlowSnapshot, OptionChain, OptionQuote
 log = logging.getLogger(__name__)
 IST = ZoneInfo("Asia/Kolkata")
 BASE = "https://www.nseindia.com"
+BAN_LIST_URL = "https://nsearchives.nseindia.com/content/fo/fo_secban.csv"
 
 # NSE's option chain reports open interest in contracts; we store units (contracts x lot
 # size) so thresholds mean the same thing as with Kite, which reports units.
@@ -96,6 +97,7 @@ def parse_option_chain(payload: dict, underlying: str, strikes_each_side: int = 
                     last_price=_first(leg, "lastPrice"),
                     oi=_first(leg, "openInterest") * oi_scale,
                     oi_change=_first(leg, "changeinOpenInterest") * oi_scale,
+                    price_change=_first(leg, "change"),
                     volume=_first(leg, "totalTradedVolume"),
                     bid=_first(leg, "bidprice", "bidPrice", "buyPrice1"),
                     ask=_first(leg, "askPrice", "askprice", "sellPrice1"),
@@ -140,6 +142,16 @@ def parse_fii_dii(payload: list) -> FlowSnapshot | None:
     return FlowSnapshot(date=day, fii_net=fii, dii_net=dii)
 
 
+def parse_ban_list(text: str) -> set[str]:
+    """Parse fo_secban.csv: a header line, then "n,SYMBOL" rows (or NIL on the header)."""
+    banned = set()
+    for line in text.splitlines()[1:]:
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 2 and parts[1] and parts[1].upper() != "NIL":
+            banned.add(parts[1].upper())
+    return banned
+
+
 class NSEClient:
     def __init__(self, web: WebClient | None = None):
         self.web = web or WebClient(
@@ -180,3 +192,7 @@ class NSEClient:
 
     def fii_dii(self) -> FlowSnapshot | None:
         return parse_fii_dii(self.web.get_json(f"{BASE}/api/fiidiiTradeReact"))
+
+    def ban_list(self) -> set[str]:
+        """Stocks in the F&O ban period today (MWPL above 95%): no fresh positions."""
+        return parse_ban_list(self.web.get_text(BAN_LIST_URL))

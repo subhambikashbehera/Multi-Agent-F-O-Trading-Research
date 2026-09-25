@@ -107,6 +107,9 @@ class SampleDataProvider:
                         last_price=round(price, 2),
                         oi=round(oi),
                         oi_change=round(oi * rng.normal(0.08 if opt == "PE" else 0.03, 0.05)),
+                        # Puts cheapening while OI rises (put writing), calls firming.
+                        price_change=round(price * rng.normal(-0.08 if opt == "PE" else 0.04,
+                                                              0.03), 2),
                         volume=round(oi * rng.uniform(2, 6)),
                         bid=round(price - spread / 2, 2),
                         ask=round(price + spread / 2, 2),
@@ -129,6 +132,9 @@ class SampleDataProvider:
             v += 0.1 * (14 - v) + rng.normal(0, 0.6)
             values.append(max(v, 9.0))
         return values
+
+    def ban_list(self) -> set[str]:
+        return {"SAMPLEBANNEDSTOCK"}
 
     def fii_dii(self) -> FlowSnapshot | None:
         return FlowSnapshot(date=self.as_of.date(), fii_net=1_250.0, dii_net=-400.0)

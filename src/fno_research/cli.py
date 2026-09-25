@@ -54,6 +54,14 @@ def _review(settings: Settings, action: str, report_id: str | None, note: str) -
     from fno_research.review import PENDING, ReviewQueue
 
     queue = ReviewQueue(settings.db_path)
+    if action == "log":
+        from fno_research.review import decision_log
+
+        rows = decision_log(queue, PaperBook(settings.db_path))
+        with pd.option_context("display.width", 200, "display.max_columns", 20):
+            print(pd.DataFrame(rows).drop(columns=["id"]).to_string(index=False)
+                  if rows else "No runs logged yet.")
+        return
     if action == "list":
         for row in queue.list(PENDING):
             print(f"{row['id']}  {row['created_at'][:16]}  {row['report'].summary}")
@@ -98,7 +106,7 @@ def main(argv: list[str] | None = None) -> None:
     bt.add_argument("--years", type=float, default=3.0)
 
     rv = sub.add_parser("review", help="Work the review queue")
-    rv.add_argument("action", choices=["list", "approve", "reject"])
+    rv.add_argument("action", choices=["list", "log", "approve", "reject"])
     rv.add_argument("report_id", nargs="?")
     rv.add_argument("--note", default="")
 
@@ -114,7 +122,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "backtest":
         _backtest(settings, args.underlying, args.source, args.years)
     elif args.command == "review":
-        if args.action != "list" and not args.report_id:
+        if args.action in ("approve", "reject") and not args.report_id:
             parser.error("report_id is required to approve or reject")
         _review(settings, args.action, args.report_id, args.note)
     elif args.command == "paper":

@@ -7,7 +7,7 @@ from fno_research.data.sample import SampleDataProvider, StaticNewsProvider
 from fno_research.models import AggregateSignal, Direction, MarketContext
 from fno_research.paper import PaperBook
 from fno_research.pipeline import ResearchPipeline
-from fno_research.review import APPROVED, BLOCKED, PENDING, ReviewQueue
+from fno_research.review import APPROVED, PENDING, ReviewQueue, decision_log
 from fno_research.risk import MarginInfo, RiskEngine
 from fno_research.store import FeatureStore
 from fno_research.strategy import build_idea
@@ -96,12 +96,14 @@ def test_risk_blocks_when_one_lot_exceeds_budget(settings, chain):
 
 def test_pipeline_end_to_end(settings):
     store, book = FeatureStore(settings.db_path), PaperBook(settings.db_path)
-    pipeline = ResearchPipeline(settings, SampleDataProvider(drift=-0.01),
+    settings.risk.capital = 1_000_000
+    pipeline = ResearchPipeline(settings, SampleDataProvider(drift=0.004),
                                 StaticNewsProvider(), flows=SampleDataProvider(),
                                 store=store, paper=book)
     report = pipeline.run("nifty")
     assert report.underlying == "NIFTY"
-    assert report.aggregate.groups["technical"].direction == Direction.BEARISH
+    assert report.aggregate.groups["technical"].direction == Direction.BULLISH
+    assert report.aggregate.groups["context"].direction == Direction.BULLISH
     assert report.context.vix and report.context.vol_regime != "unknown"
     assert report.context.expiry_tag == "mid_cycle"
     # Without an API key the news agent is shown but does not vote.
@@ -112,15 +114,17 @@ def test_pipeline_end_to_end(settings):
     assert store.chains("NIFTY") and store.flows()
 
     queue = ReviewQueue(settings.db_path)
-    status = queue.add(report)
-    assert status in (PENDING, BLOCKED)
-    if status == PENDING:
-        approved = queue.decide(report.id, approve=True, note="looks fine")
-        book.open_from_report(approved)
-        assert queue.list(APPROVED)[0]["reviewer_note"] == "looks fine"
-        assert len(book.positions("open")) == 1
-        with pytest.raises(ValueError):
-            queue.decide(report.id, approve=False)
+    assert queue.add(report) == PENDING, report.summary
+    approved = queue.decide(report.id, approve=True, note="looks fine")
+    book.open_from_report(approved)
+    assert queue.list(APPROVED)[0]["reviewer_note"] == "looks fine"
+    assert len(book.positions("open")) == 1
+    with pytest.raises(ValueError):
+        queue.decide(report.id, approve=False)
+
+    log = decision_log(queue, book)
+    assert log[0]["paper"] == "open" and log[0]["pnl"] == pytest.approx(0)
+    assert "F&O ban list" not in failed(report.risk)
 
 
 def test_failed_data_does_not_crash_pipeline(settings):
@@ -170,3 +174,15 @@ def test_report_round_trips_when_all_data_is_down(settings):
     queue = ReviewQueue(settings.db_path)
     queue.add(report)
     assert queue.list()[0]["report"].id == report.id
+
+
+def test_ban_list_check(settings, chain):
+    engine = RiskEngine(settings.risk)
+    idea = engine.size(build_idea(chain, view(Direction.BULLISH)))
+    stock = idea.model_copy(update={"underlying": "RBLBANK"})
+    b = Direction.BULLISH
+    assert "F&O ban list" in failed(engine.evaluate(stock, view(b), chain, banned={"RBLBANK"}))
+    assert "F&O ban list" in failed(engine.evaluate(stock, view(b), chain, banned=None))
+    assert "F&O ban list" not in failed(engine.evaluate(stock, view(b), chain, banned=set()))
+    # Indices are never banned, even with no list.
+    assert "F&O ban list" not in failed(engine.evaluate(idea, view(b), chain, banned=None))

@@ -14,10 +14,10 @@ position.
 | 1 | Data pipeline | **Built.** Free sources by default: NSE website (option chain, spot, India VIX, FII/DII) and Yahoo Finance (OHLCV history); Google News + ET/Moneycontrol/LiveMint RSS. Kite Connect provider ready for later. |
 | 2 | Feature store | **Built.** SQLite: every run's agent features, VIX regime, expiry tag, FII/DII history, and a full option-chain snapshot. IV comes from NSE (or Black-Scholes when missing). |
 | 3 | Technical agents | **Built + backtest harness.** Trend (MA cross, ADX, Supertrend), momentum (RSI, MACD), volatility (ATR, Bollinger), volume (OBV, VWAP). |
-| 4 | Context agents | **Built.** Options positioning (PCR, OI walls, fresh OI, max pain, IV skew), FII/DII flows, news (Claude). Scored from the feature store as history accumulates. |
+| 4 | Context agents | **Built.** Options positioning (PCR, OI walls, OI build-up, fresh OI, max pain, IV skew), FII/DII flows, news (Claude). Scored from the feature store as history accumulates. |
 | 5 | Aggregator | **Built, weights unvalidated.** Technical/context groups, conflict veto, allocation multiplier. Weights and thresholds are placeholders until backtested on real data. |
-| 6 | Risk engine | **Built.** Capital and margin checks, 1-lot cap while testing, daily-loss kill switch, no stacking on an open position, liquidity, expiry-day and VIX-regime checks. |
-| 7 | Paper trading | **Built.** Approved ideas become paper positions, marked on every run and settled at expiry. Every signal and decision is logged. Next: run it for 2–4 weeks. |
+| 6 | Risk engine | **Built.** Capital and margin checks, 1-lot cap while testing, F&O ban list, daily-loss kill switch, no stacking on an open position, liquidity, expiry-day and VIX-regime checks. |
+| 7 | Paper trading | **Built.** Approved ideas become paper positions, marked on every run and settled at expiry. Every signal and decision is logged with the paper outcome of approved ideas (`fno-research review log`). Next: run it for 2–4 weeks. |
 | 8 | Live with human review | Not started, deliberately. |
 
 ## How it works
@@ -63,6 +63,7 @@ streamlit run dashboard/app.py                 # research, review queue, paper b
 fno-research run NIFTY                         # one run (free data by default)
 fno-research run BANKNIFTY --source sample     # synthetic data, works offline
 fno-research review list                       # pending ideas
+fno-research review log                        # every run, decision and paper outcome
 fno-research review approve <id> --note "..."  # approve -> paper position
 fno-research paper                             # positions, P&L, kill switch
 fno-research paper reset-kill-switch
@@ -121,6 +122,8 @@ scripts/scenario_session.py
   revises them.
 - Yahoo gives up to ~60 days of 15-minute history and years of daily data. Index volume on
   Yahoo can be patchy; the volume agent abstains when volume is missing.
+- **OI build-up** reads each near-the-money strike's price change with its OI change (long build-up, short build-up, short covering, long unwinding). Put writing counts as bullish and call writing as bearish.
+- **F&O ban list** comes from NSE's `fo_secban.csv`. Index options are never banned, so the check only matters once stock options are added; for a stock, a missing list blocks the trade.
 - Margin without a broker is estimated as the spread's net debit. With Kite it comes from
   Kite's basket-margin API.
 - Paper fills assume you pay the ask and receive the bid. Expiry settlement uses the spot

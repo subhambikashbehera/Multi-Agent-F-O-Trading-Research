@@ -20,7 +20,7 @@ from fno_research.data.sample import SampleDataProvider, StaticNewsProvider
 from fno_research.models import FlowSnapshot
 from fno_research.paper import PaperBook
 from fno_research.pipeline import ResearchPipeline
-from fno_research.review import BLOCKED, PENDING, ReviewQueue
+from fno_research.review import BLOCKED, PENDING, ReviewQueue, decision_log
 from fno_research.store import FeatureStore
 
 failures: list[str] = []
@@ -126,6 +126,11 @@ def main() -> int:
         print(f"    #{p['id']} settled: entry ₹{p['entry_cost']:,.0f}, exit "
               f"₹{p['exit_value']:,.0f}, realized ₹{p['realized_pnl']:+,.0f}")
 
+    approved = [r for r in decision_log(queue, book) if r["paper"]]
+    print(f"    Decision log outcomes: {[(r['status'], r['paper'], r['pnl']) for r in approved]}")
+    expect(len(approved) == 1 and approved[0]["paper"] == "closed"
+           and abs(approved[0]["pnl"] - closed[0]["realized_pnl"]) < 0.01,
+           "decision log shows the approved idea's realized outcome")
     runs = len(queue.list(limit=1000))
     print(f"\nLogged {runs} runs; feature store has {len(store.chains('NIFTY'))} NIFTY chains.")
     print(f"\n{'ALL EXPECTATIONS MET' if not failures else f'{len(failures)} FAILED'}")

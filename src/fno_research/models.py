@@ -32,7 +32,8 @@ class Candle(BaseModel):
 
 
 class OptionQuote(BaseModel):
-    """One strike of the chain. `oi_change` is change versus the previous session."""
+    """One strike of the chain. `oi_change` and `price_change` are versus the previous
+    session's close."""
 
     strike: float
     option_type: str  # "CE" or "PE"
@@ -40,6 +41,7 @@ class OptionQuote(BaseModel):
     last_price: float
     oi: float = 0.0
     oi_change: float = 0.0
+    price_change: float = 0.0
     volume: float = 0.0
     bid: float = 0.0
     ask: float = 0.0

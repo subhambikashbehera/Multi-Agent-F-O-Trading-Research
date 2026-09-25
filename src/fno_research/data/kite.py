@@ -123,14 +123,17 @@ class KiteDataProvider:
             bids = depth.get("buy") or [{}]
             asks = depth.get("sell") or [{}]
             oi = float(q.get("oi", 0))
+            prev_close = float((q.get("ohlc") or {}).get("close", 0) or 0)
+            last = float(q.get("last_price", 0))
             chain_quotes.append(
                 OptionQuote(
                     strike=inst["strike"],
                     option_type=inst["instrument_type"],
                     tradingsymbol=inst["tradingsymbol"],
-                    last_price=float(q.get("last_price", 0)),
+                    last_price=last,
                     oi=oi,
                     oi_change=oi - prev_oi.get(inst["tradingsymbol"], oi),
+                    price_change=last - prev_close if prev_close else 0.0,
                     volume=float(q.get("volume", 0)),
                     bid=float(bids[0].get("price", 0) or 0),
                     ask=float(asks[0].get("price", 0) or 0),
