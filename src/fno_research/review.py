@@ -1,6 +1,7 @@
 """Human review queue. Reports that pass the risk engine wait here for a person to decide.
 
-Nothing in this project places orders; approving an idea only records the decision.
+Nothing in this project places orders. Approving an idea records the decision and, in
+the dashboard and CLI, opens a paper position.
 """
 
 from __future__ import annotations
@@ -71,7 +72,8 @@ class ReviewQueue:
             for r in rows
         ]
 
-    def decide(self, report_id: str, approve: bool, note: str = "") -> None:
+    def decide(self, report_id: str, approve: bool, note: str = "") -> ResearchReport:
+        """Record the decision and return the report (approve -> open a paper position)."""
         cur = self.conn.execute(
             "UPDATE reports SET status = ?, reviewer_note = ?, decided_at = ? "
             "WHERE id = ? AND status = ?",
@@ -81,3 +83,6 @@ class ReviewQueue:
         self.conn.commit()
         if cur.rowcount == 0:
             raise ValueError(f"Report {report_id} is not pending review")
+        row = self.conn.execute("SELECT payload FROM reports WHERE id = ?",
+                                (report_id,)).fetchone()
+        return ResearchReport.model_validate_json(row[0])

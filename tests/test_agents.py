@@ -1,19 +1,80 @@
+from datetime import date
 from types import SimpleNamespace
 
 import anthropic
 import httpx2
+import pytest
 
-from fno_research.agents import NewsAgent, OptionsPositioningAgent, PriceActionAgent
+from fno_research.agents import (
+    FlowsAgent,
+    MomentumAgent,
+    NewsAgent,
+    OptionsPositioningAgent,
+    TrendAgent,
+    VolatilityAgent,
+    VolumeAgent,
+)
 from fno_research.agents.news import NewsView
+from fno_research.analytics.indicators import candles_to_frame
 from fno_research.data.sample import SampleDataProvider, StaticNewsProvider
-from fno_research.models import Direction
+from fno_research.models import Direction, FlowSnapshot
 
 
-def test_price_action_reads_trend():
-    bull = PriceActionAgent(SampleDataProvider(drift=0.01)).analyse("NIFTY")
-    bear = PriceActionAgent(SampleDataProvider(drift=-0.01)).analyse("NIFTY")
-    assert bull.direction == Direction.BULLISH and bull.score > 0.5
-    assert bear.direction == Direction.BEARISH and bear.score < -0.5
+def daily(drift, n=250):
+    return candles_to_frame(SampleDataProvider(drift=drift).candles("NIFTY", "day", n))
+
+
+@pytest.mark.parametrize("agent_cls", [TrendAgent, MomentumAgent, VolumeAgent])
+def test_directional_technical_agents_read_trend(agent_cls):
+    bull = agent_cls().analyse_frame(daily(0.004))
+    bear = agent_cls().analyse_frame(daily(-0.004))
+    assert bull.group == "technical"
+    assert bull.direction == Direction.BULLISH
+    assert bear.direction == Direction.BEARISH
+
+
+def test_trend_confidence_needs_adx():
+    strong = TrendAgent().analyse_frame(daily(0.01))
+    flat = TrendAgent().analyse_frame(daily(0.0))
+    assert strong.features["adx"] > flat.features["adx"]
+    assert strong.confidence > flat.confidence
+
+
+def test_volatility_agent_flags_breakout():
+    frame = daily(0.0)
+    # Quiet market, then a sharp two-day jump through the upper band.
+    frame.loc[:, ["open", "high", "low", "close"]] = 25_000.0
+    frame.iloc[:-2, frame.columns.get_loc("high")] = 25_020.0
+    frame.iloc[:-2, frame.columns.get_loc("low")] = 24_980.0
+    for i, px in ((-2, 25_300.0), (-1, 25_600.0)):
+        frame.iloc[i, [frame.columns.get_loc(c) for c in ("open", "high", "low", "close")]] = \
+            [px - 100, px + 20, px - 120, px]
+    sig = VolatilityAgent().analyse_frame(frame)
+    assert sig.features["state"] == "upside breakout"
+    assert sig.direction == Direction.BULLISH and sig.confidence >= 0.55
+
+
+def test_volume_agent_without_volume_abstains():
+    frame = daily(0.01)
+    frame["volume"] = 0.0
+    sig = VolumeAgent().analyse_frame(frame)
+    assert sig.confidence == 0 and "No volume" in sig.rationale
+
+
+def test_technical_agents_need_enough_bars():
+    sig = TrendAgent().analyse_frame(daily(0.01, n=30))
+    assert sig.confidence == 0
+
+
+def test_flows_agent():
+    days = [FlowSnapshot(date=date(2026, 9, d), fii_net=3_000, dii_net=500) for d in
+            range(15, 20)]
+    sig = FlowsAgent().analyse_flows(days)
+    assert sig.group == "context" and sig.score == pytest.approx(1.0)
+    assert sig.confidence == pytest.approx(0.4)
+    one = FlowsAgent().analyse_flows(days[:1])
+    assert one.confidence < sig.confidence
+    assert FlowsAgent().analyse_flows([]).confidence == 0
 
 
 def test_options_positioning_signal_is_bounded(provider):

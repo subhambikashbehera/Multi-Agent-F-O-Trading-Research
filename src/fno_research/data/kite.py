@@ -15,9 +15,10 @@ from zoneinfo import ZoneInfo
 from kiteconnect import KiteConnect
 
 from fno_research.config import INDEX_SPOT_SYMBOLS, Settings
-from fno_research.models import Candle, OptionChain, OptionQuote
+from fno_research.models import Candle, OptionChain, OptionQuote, TradeIdea
 
 IST = ZoneInfo("Asia/Kolkata")
+VIX_SYMBOL = "NSE:INDIA VIX"
 QUOTE_BATCH = 500  # Kite's per-request instrument limit for quote()
 
 
@@ -144,6 +145,38 @@ class KiteDataProvider:
             as_of=now.replace(tzinfo=None),
             quotes=chain_quotes,
         )
+
+
+    def vix(self) -> float | None:
+        return float(self.kite.ltp([VIX_SYMBOL])[VIX_SYMBOL]["last_price"])
+
+    def vix_history(self, lookback_days: int = 365) -> list[float]:
+        token = self.kite.ltp([VIX_SYMBOL])[VIX_SYMBOL]["instrument_token"]
+        to_dt = datetime.now(IST)
+        rows = self.kite.historical_data(token, to_dt - timedelta(days=lookback_days), to_dt,
+                                         "day")
+        return [float(r["close"]) for r in rows]
+
+    def margin_required(self, idea: TradeIdea) -> float:
+        """Broker-computed margin for the whole basket, with hedge benefit."""
+        orders = [
+            {
+                "exchange": "NFO",
+                "tradingsymbol": leg.tradingsymbol,
+                "transaction_type": leg.action,
+                "variety": "regular",
+                "product": "NRML",
+                "order_type": "MARKET",
+                "quantity": leg.lots * idea.lot_size,
+                "price": 0,
+            }
+            for leg in idea.legs
+        ]
+        result = self.kite.basket_order_margins(orders, consider_positions=True, mode="compact")
+        return float(result["final"]["total"])
+
+    def available_margin(self) -> float:
+        return float(self.kite.margins("equity")["net"])
 
 
 def login_url(settings: Settings) -> str:

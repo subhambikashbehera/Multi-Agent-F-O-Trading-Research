@@ -39,6 +39,7 @@ class NewsView(BaseModel):
 
 class NewsAgent:
     name = "news"
+    group = "context"
 
     def __init__(self, news: NewsProvider, model: str = "claude-opus-5",
                  client: anthropic.Anthropic | None = None, effort: str = "medium"):
@@ -85,6 +86,7 @@ class NewsAgent:
                 "key_drivers": "; ".join(view.key_drivers),
                 "event_risk": "; ".join(view.event_risk),
             },
+            self.group,
         )
 
     def _ask_claude(self, underlying: str, items: list[NewsItem]) -> NewsView | None:
@@ -114,4 +116,4 @@ class NewsAgent:
         return response.parsed_output
 
     def _neutral(self, reason: str) -> AgentSignal:
-        return make_signal(self.name, 0.0, 0.0, reason, {})
+        return make_signal(self.name, 0.0, 0.0, reason, {}, self.group)

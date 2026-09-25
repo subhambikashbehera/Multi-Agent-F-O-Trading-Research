@@ -10,29 +10,38 @@ from datetime import date, datetime, timedelta
 import numpy as np
 
 from fno_research.analytics.options import bs_price
-from fno_research.models import Candle, NewsItem, OptionChain, OptionQuote
+from fno_research.config import lot_size
+from fno_research.models import Candle, FlowSnapshot, NewsItem, OptionChain, OptionQuote
 
 _PROFILES = {
-    "NIFTY": {"spot": 25_000.0, "step": 50.0, "lot": 65, "vol": 0.13},
-    "BANKNIFTY": {"spot": 55_000.0, "step": 100.0, "lot": 30, "vol": 0.16},
-    "FINNIFTY": {"spot": 26_500.0, "step": 50.0, "lot": 60, "vol": 0.15},
-    "MIDCPNIFTY": {"spot": 13_000.0, "step": 25.0, "lot": 120, "vol": 0.18},
+    "NIFTY": {"spot": 25_000.0, "step": 50.0, "vol": 0.13},
+    "BANKNIFTY": {"spot": 55_000.0, "step": 100.0, "vol": 0.16},
+    "FINNIFTY": {"spot": 26_500.0, "step": 50.0, "vol": 0.15},
+    "MIDCPNIFTY": {"spot": 13_000.0, "step": 25.0, "vol": 0.18},
 }
 
 
 class SampleDataProvider:
     name = "sample"
 
-    def __init__(self, seed: int = 7, drift: float = 0.0006, as_of: datetime | None = None):
+    def __init__(self, seed: int = 7, drift: float = 0.0006, as_of: datetime | None = None,
+                 spot: float | None = None, vol: float | None = None):
         self.seed = seed
         self.drift = drift  # daily drift; positive makes the series trend up
         self.as_of = as_of or datetime(2026, 9, 22, 11, 0)
+        self.spot_override = spot  # move the market for scenario tests
+        self.vol_override = vol
 
     def _profile(self, underlying: str) -> dict:
         try:
-            return _PROFILES[underlying.upper()]
+            profile = dict(_PROFILES[underlying.upper()])
         except KeyError as exc:
             raise ValueError(f"Unsupported underlying {underlying!r}") from exc
+        if self.spot_override:
+            profile["spot"] = self.spot_override
+        if self.vol_override:
+            profile["vol"] = self.vol_override
+        return profile
 
     def _closes(self, underlying: str, interval: str, n: int, per_bar_vol: float) -> np.ndarray:
         rng = np.random.default_rng(self.seed + sum(map(ord, underlying + interval)))
@@ -105,8 +114,24 @@ class SampleDataProvider:
                 )
         return OptionChain(
             underlying=underlying.upper(), spot=spot, expiry=expiry,
-            lot_size=p["lot"], as_of=self.as_of, quotes=quotes,
+            lot_size=lot_size(underlying), as_of=self.as_of, quotes=quotes,
         )
+
+
+    def vix(self) -> float | None:
+        return self.vix_history(5)[-1]
+
+    def vix_history(self, lookback_days: int = 365) -> list[float]:
+        rng = np.random.default_rng(self.seed + 99)
+        # Mean-reverting around 14 with occasional spikes.
+        values, v = [], 14.0
+        for _ in range(lookback_days):
+            v += 0.1 * (14 - v) + rng.normal(0, 0.6)
+            values.append(max(v, 9.0))
+        return values
+
+    def fii_dii(self) -> FlowSnapshot | None:
+        return FlowSnapshot(date=self.as_of.date(), fii_net=1_250.0, dii_net=-400.0)
 
 
 def _next_tuesday(d: date) -> date:

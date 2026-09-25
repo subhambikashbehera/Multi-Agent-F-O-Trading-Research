@@ -82,11 +82,18 @@ class AgentSignal(BaseModel):
     """
 
     agent: str
+    group: str = ""  # "technical" or "context"
     score: float = Field(ge=-1.0, le=1.0)
     confidence: float = Field(ge=0.0, le=1.0)
     direction: Direction
     rationale: str
     features: dict[str, float | str | None] = Field(default_factory=dict)
+
+
+class GroupScore(BaseModel):
+    score: float
+    confidence: float
+    direction: Direction
 
 
 class AggregateSignal(BaseModel):
@@ -95,6 +102,29 @@ class AggregateSignal(BaseModel):
     direction: Direction
     agreement: float  # 1.0 when every confident agent points the same way
     contributions: dict[str, float]
+    groups: dict[str, GroupScore] = Field(default_factory=dict)
+    veto: bool = False
+    veto_reason: str = ""
+    # 0 = no position, 1 = full size allowed by the risk budget.
+    allocation_multiplier: float = 0.0
+
+
+class FlowSnapshot(BaseModel):
+    """FII/DII provisional cash-market flows for one day, in ₹ crore."""
+
+    date: date
+    fii_net: float
+    dii_net: float
+
+
+class MarketContext(BaseModel):
+    data_source: str
+    vix: float | None = None
+    vix_percentile: float | None = None  # 0-100, versus the past year
+    vol_regime: str = "unknown"  # low / normal / elevated / extreme
+    days_to_expiry: int | None = None
+    expiry_tag: str = "unknown"  # expiry_day / near_expiry / mid_cycle
+    flows: list[FlowSnapshot] = Field(default_factory=list)
 
 
 class OptionLeg(BaseModel):
@@ -145,7 +175,8 @@ class ResearchReport(BaseModel):
     id: str
     created_at: datetime
     underlying: str
-    spot: float
+    spot: float | None  # None when no data source could be reached
+    context: MarketContext | None = None
     signals: list[AgentSignal]
     aggregate: AggregateSignal
     idea: TradeIdea | None

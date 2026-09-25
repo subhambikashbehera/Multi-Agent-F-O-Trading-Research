@@ -19,6 +19,7 @@ from fno_research.models import AgentSignal, OptionChain
 
 class OptionsPositioningAgent:
     name = "options_positioning"
+    group = "context"
 
     def __init__(self, provider: MarketDataProvider, strikes_each_side: int = 15):
         self.provider = provider
@@ -91,4 +92,4 @@ class OptionsPositioningAgent:
             call_wall=walls.call_wall, atm_iv=round(iv, 4) if iv else None,
             iv_skew=round(skew, 4) if skew is not None else None,
         )
-        return make_signal(self.name, score, confidence, rationale, features)
+        return make_signal(self.name, score, confidence, rationale, features, self.group)
