@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 IST = ZoneInfo("Asia/Kolkata")
 BASE = "https://www.nseindia.com"
 BAN_LIST_URL = "https://nsearchives.nseindia.com/content/fo/fo_secban.csv"
+LOT_SIZE_URL = "https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv"
 
 # NSE's option chain reports open interest in contracts; we store units (contracts x lot
 # size) so thresholds mean the same thing as with Kite, which reports units.
@@ -47,13 +48,17 @@ def parse_expiry(text: str) -> date:
 
 
 def parse_option_chain(payload: dict, underlying: str, strikes_each_side: int = 15,
-                       expiry: date | None = None) -> OptionChain:
-    """Parse NSE option-chain JSON (legacy `option-chain-indices` or `option-chain-v3`)."""
+                       expiry: date | None = None, lot: int | None = None,
+                       min_days: int = 0) -> OptionChain:
+    """Parse NSE option-chain JSON (legacy `option-chain-indices`/`-equities` or `-v3`).
+
+    `min_days` skips expiries closer than that (stock swing trades want next month's
+    contract once the current one is about to expire)."""
     records = payload.get("records") or payload
     rows = records.get("data") or []
     if not rows:
         raise ValueError("Option chain response has no data")
-    lot = lot_size(underlying)
+    lot = lot or lot_size(underlying)
     oi_scale = lot if NSE_OI_IN_CONTRACTS else 1
 
     def row_expiry(row: dict) -> date | None:
@@ -65,7 +70,9 @@ def parse_option_chain(payload: dict, underlying: str, strikes_each_side: int = 
         expiries = sorted({e for e in (row_expiry(r) for r in rows) if e})
         if not expiries and records.get("expiryDates"):
             expiries = sorted(parse_expiry(e) for e in records["expiryDates"])
-        expiry = expiries[0]
+        today = datetime.now(IST).date()
+        later = [e for e in expiries if (e - today).days >= min_days]
+        expiry = later[0] if later else expiries[-1]
     rows = [r for r in rows if row_expiry(r) in (expiry, None)]
 
     spot = _num(records.get("underlyingValue"))
@@ -142,6 +149,20 @@ def parse_fii_dii(payload: list) -> FlowSnapshot | None:
     return FlowSnapshot(date=day, fii_net=fii, dii_net=dii)
 
 
+def parse_lot_sizes(text: str) -> dict[str, int]:
+    """fo_mktlots.csv: UNDERLYING,SYMBOL,<month>,<month>,... -> {symbol: current-month lot}."""
+    lots = {}
+    for line in text.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 3 or parts[1].upper() in ("SYMBOL", ""):
+            continue
+        for value in parts[2:]:
+            if value.isdigit():
+                lots[parts[1].upper()] = int(value)
+                break
+    return lots
+
+
 def parse_ban_list(text: str) -> set[str]:
     """Parse fo_secban.csv: a header line, then "n,SYMBOL" rows (or NIL on the header)."""
     banned = set()
@@ -192,6 +213,31 @@ class NSEClient:
 
     def fii_dii(self) -> FlowSnapshot | None:
         return parse_fii_dii(self.web.get_json(f"{BASE}/api/fiidiiTradeReact"))
+
+    def lot_sizes(self) -> dict[str, int]:
+        return parse_lot_sizes(self.web.get_text(LOT_SIZE_URL))
+
+    def stock_option_chain(self, symbol: str, lot: int, strikes_each_side: int = 10,
+                           min_days: int = 7) -> OptionChain:
+        symbol = symbol.upper()
+        try:
+            info = self.web.get_json(f"{BASE}/api/option-chain-contract-info",
+                                     {"symbol": symbol})
+            today = datetime.now(IST).date()
+            expiries = sorted(parse_expiry(e) for e in info["expiryDates"])
+            expiry = next(e for e in expiries if (e - today).days >= min_days)
+            payload = self.web.get_json(
+                f"{BASE}/api/option-chain-v3",
+                {"type": "Equity", "symbol": symbol, "expiry": f"{expiry:%d-%b-%Y}"},
+            )
+            return parse_option_chain(payload, symbol, strikes_each_side, expiry, lot=lot)
+        except Exception as exc:
+            log.info("option-chain-v3 for %s failed (%s); trying option-chain-equities",
+                     symbol, exc)
+            payload = self.web.get_json(f"{BASE}/api/option-chain-equities",
+                                        {"symbol": symbol})
+            return parse_option_chain(payload, symbol, strikes_each_side, lot=lot,
+                                      min_days=min_days)
 
     def ban_list(self) -> set[str]:
         """Stocks in the F&O ban period today (MWPL above 95%): no fresh positions."""

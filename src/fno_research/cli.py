@@ -6,7 +6,7 @@ import argparse
 
 import pandas as pd
 
-from fno_research.config import SUPPORTED_UNDERLYINGS, Settings
+from fno_research.config import NSE_INDEX_NAMES, SUPPORTED_UNDERLYINGS, Settings
 from fno_research.factory import SOURCES
 
 
@@ -91,6 +91,59 @@ def _paper(settings: Settings, action: str) -> None:
               f"{p['expiry']:%d %b}  P&L ₹{pnl:+,.0f}")
 
 
+def _swing(settings: Settings, action: str, source: str | None, idea_id: str | None,
+           note: str) -> None:
+    from fno_research.paper import PaperBook
+    from fno_research.swing.book import PENDING, SwingBook
+
+    book, paper = SwingBook(settings.db_path), PaperBook(settings.db_path)
+    if action == "scan":
+        from fno_research.factory import build_swing
+
+        def progress(i, n, sym):
+            if i % 25 == 0:
+                print(f"  scoring {i + 1}/{n} ({sym})…")
+
+        report = build_swing(settings, source).run(progress)
+        book.add_ideas(report.ideas)
+        print(f"{report.universe}: {len(report.scored)} scored, {len(report.failed)} failed; "
+              f"NIFTY 60d {report.benchmark_ret_60:+.1%}")
+        for a in report.exit_alerts:
+            print(f"  EXIT ALERT {a.symbol} ({a.side}, position {a.position_id}): {a.reason}")
+        for idea in report.ideas:
+            verdict = "passes risk" if idea.risk.approved else "blocked: " + ", ".join(
+                c.name for c in idea.risk.failures)
+            if idea.plan:
+                p = idea.plan
+                what = (f"BUY {p.qty} @ {p.entry:,.2f} stop {p.stop:,.2f} target "
+                        f"{p.target:,.2f}")
+            else:
+                o = idea.option_idea
+                what = (f"{o.strategy} " + " / ".join(f"{leg.action} {leg.strike:g}PE"
+                                                        for leg in o.legs)
+                        + f" max loss ₹{o.max_loss:,.0f}")
+            print(f"  {idea.id} {idea.side:<5} {idea.symbol:<12} {idea.stock.score:+.2f} "
+                  f"{what}  [{verdict}]")
+    elif action == "list":
+        for row in book.ideas(PENDING):
+            print(f"{row['id']}  {row['idea'].side:<5} {row['symbol']:<12} "
+                  f"score {row['idea'].stock.score:+.2f}  max loss ₹{row['idea'].max_loss:,.0f}")
+    elif action in ("approve", "reject"):
+        pos = book.decide(idea_id, action == "approve", note, paper=paper)
+        print(f"Approved; paper position {pos} opened." if pos else "Rejected.")
+    elif action == "positions":
+        for p in book.positions():
+            pnl = p["pnl"] if p["status"] == "closed" else p["unrealized_pnl"]
+            print(f"long  #{p['id']} {p['status']:<6} {p['symbol']:<12} {p['qty']} @ "
+                  f"{p['entry']:,.2f}  P&L ₹{pnl:+,.0f} {p['exit_reason'] or ''}")
+        for p in paper.positions():
+            if p["underlying"] in NSE_INDEX_NAMES:
+                continue
+            pnl = p["realized_pnl"] if p["status"] == "closed" else p["unrealized_pnl"]
+            print(f"short #{p['id']} {p['status']:<6} {p['underlying']:<12} {p['strategy']}  "
+                  f"P&L ₹{pnl:+,.0f}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="fno-research")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -113,6 +166,12 @@ def main(argv: list[str] | None = None) -> None:
     pp = sub.add_parser("paper", help="Paper positions and the kill switch")
     pp.add_argument("action", nargs="?", default="list", choices=["list", "reset-kill-switch"])
 
+    sw = sub.add_parser("swing", help="Swing desk: scan, review, positions")
+    sw.add_argument("action", choices=["scan", "list", "approve", "reject", "positions"])
+    sw.add_argument("idea_id", nargs="?")
+    sw.add_argument("--source", choices=("nse", "sample"))
+    sw.add_argument("--note", default="")
+
     args = parser.parse_args(argv)
     settings = Settings()
     if args.command == "kite-login":
@@ -127,6 +186,10 @@ def main(argv: list[str] | None = None) -> None:
         _review(settings, args.action, args.report_id, args.note)
     elif args.command == "paper":
         _paper(settings, args.action)
+    elif args.command == "swing":
+        if args.action in ("approve", "reject") and not args.idea_id:
+            parser.error("idea_id is required to approve or reject")
+        _swing(settings, args.action, args.source, args.idea_id, args.note)
 
 
 if __name__ == "__main__":

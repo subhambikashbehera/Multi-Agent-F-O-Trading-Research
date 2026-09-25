@@ -14,7 +14,7 @@ import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 
-from fno_research.models import OptionChain, OptionLeg, ResearchReport
+from fno_research.models import OptionChain, OptionLeg, ResearchReport, TradeIdea
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS positions (
@@ -63,15 +63,18 @@ class PaperBook:
     # -- positions ---------------------------------------------------------
 
     def open_from_report(self, report: ResearchReport, when: datetime | None = None) -> int:
-        idea = report.idea
-        if idea is None:
+        if report.idea is None:
             raise ValueError("Report has no trade idea")
+        return self.open_idea(report.idea, report.id, when)
+
+    def open_idea(self, idea: TradeIdea, ref_id: str, when: datetime | None = None) -> int:
+        """Open a paper position for any option structure; ref_id links it to its source."""
         when = when or datetime.now()
         cur = self.conn.execute(
             "INSERT INTO positions (report_id, opened_at, underlying, expiry, strategy, "
             "lot_size, legs, entry_cost, status, last_value, last_marked_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)",
-            (report.id, when.isoformat(), idea.underlying, idea.expiry.isoformat(),
+            (ref_id, when.isoformat(), idea.underlying, idea.expiry.isoformat(),
              idea.strategy, idea.lot_size,
              json.dumps([leg.model_dump() for leg in idea.legs]), idea.net_debit,
              idea.net_debit, when.isoformat()),
@@ -163,11 +166,13 @@ class PaperBook:
         row = self.conn.execute("SELECT value FROM state WHERE key = 'kill_switch'").fetchone()
         return json.loads(row[0]) if row else {"active": False}
 
-    def check_kill_switch(self, limit: float, day: date) -> dict:
+    def check_kill_switch(self, limit: float, day: date, extra_pnl: float = 0.0) -> dict:
+        """Trip when today's P&L (options book plus `extra_pnl`, e.g. the swing cash book)
+        breaches the limit."""
         state = self.kill_switch()
         if state.get("active"):
             return state
-        pnl = self.daily_pnl(day)
+        pnl = self.daily_pnl(day) + extra_pnl
         if pnl <= -limit:
             state = {
                 "active": True,

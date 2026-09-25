@@ -96,6 +96,39 @@ class RiskLimits:
 
 
 @dataclass
+class SwingSettings:
+    """Long-only cash swing trading on an NSE index universe. Values are starting points."""
+
+    # Any niftyindices.com constituent list name: niftylargemidcap250, nifty200, nifty500...
+    universe: str = field(
+        default_factory=lambda: os.getenv("FNO_SWING_UNIVERSE", "niftylargemidcap250")
+    )
+    capital: float = field(default_factory=lambda: _env_float("FNO_SWING_CAPITAL", 500_000))
+    risk_per_trade_pct: float = 1.0  # rupees lost if the stop is hit, as % of capital
+    max_position_pct: float = 20.0  # cap on one stock's value, as % of capital
+    max_open: int = 5
+    max_per_industry: int = 2
+    min_avg_value_cr: float = 10.0  # 20-day average traded value, ₹ crore
+    max_participation_pct: float = 1.0  # position value vs average daily traded value
+    min_score: float = 0.35
+    atr_stop_mult: float = 2.0
+    min_stop_pct: float = 1.0
+    max_stop_pct: float = 10.0
+    reward_risk: float = 2.0
+    time_stop_sessions: int = 15
+    top_n: int = 10  # per side
+    allow_short: bool = True  # bearish ideas as bear put spreads on stock options
+    option_min_days: int = 7  # skip stock-option expiries closer than this
+    exit_score: float = 0.2  # alert when a held position's score turns this far against it
+    bad_news_score: float = 0.5  # news this far against a holding alerts on its own
+    news_shortlist: int = 10  # stocks per side (plus holdings) that get a news read
+    weights: dict[str, float] = field(default_factory=lambda: {
+        "trend": 0.30, "momentum": 0.20, "volatility": 0.10, "volume": 0.15,
+        "relative_strength": 0.25, "news": 0.15,
+    })
+
+
+@dataclass
 class Settings:
     # "nse" = free public data (NSE website + Yahoo Finance), "kite", or "sample".
     data_source: str = field(default_factory=lambda: os.getenv("FNO_DATA_SOURCE", "nse"))
@@ -111,6 +144,7 @@ class Settings:
     weights: AgentWeights = field(default_factory=AgentWeights)
     aggregator: AggregatorSettings = field(default_factory=AggregatorSettings)
     risk: RiskLimits = field(default_factory=RiskLimits)
+    swing: SwingSettings = field(default_factory=SwingSettings)
     strikes_each_side: int = 15  # chain width fetched around ATM
 
     @property

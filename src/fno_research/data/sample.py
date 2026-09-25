@@ -81,45 +81,9 @@ class SampleDataProvider:
 
     def option_chain(self, underlying: str, strikes_each_side: int = 15) -> OptionChain:
         p = self._profile(underlying)
-        rng = np.random.default_rng(self.seed + 1)
-        spot, step = p["spot"], p["step"]
-        expiry = _next_tuesday(self.as_of.date())
-        t = max((expiry - self.as_of.date()).days, 0.5) / 365
-        atm = round(spot / step) * step
-        quotes = []
-        for k in range(-strikes_each_side, strikes_each_side + 1):
-            strike = atm + k * step
-            moneyness = (strike - spot) / spot
-            for opt in ("CE", "PE"):
-                vol = p["vol"] * (1 + 1.5 * moneyness**2 * 100) + (0.01 if opt == "PE" else 0)
-                price = max(bs_price(spot, strike, t, vol, opt), 0.05)
-                # OI peaks at round strikes a little OTM on each side.
-                otm = (strike - spot) if opt == "CE" else (spot - strike)
-                oi = 2e6 * np.exp(-(((otm - 3 * step) / (6 * step)) ** 2)) if otm > 0 else 3e5
-                oi *= 1.6 if strike % (step * 10) == 0 else 1.0
-                oi *= 1.15 if opt == "PE" else 1.0
-                spread = max(0.05, price * 0.004)
-                quotes.append(
-                    OptionQuote(
-                        strike=strike,
-                        option_type=opt,
-                        tradingsymbol=f"{underlying}{expiry:%y%b}{int(strike)}{opt}".upper(),
-                        last_price=round(price, 2),
-                        oi=round(oi),
-                        oi_change=round(oi * rng.normal(0.08 if opt == "PE" else 0.03, 0.05)),
-                        # Puts cheapening while OI rises (put writing), calls firming.
-                        price_change=round(price * rng.normal(-0.08 if opt == "PE" else 0.04,
-                                                              0.03), 2),
-                        volume=round(oi * rng.uniform(2, 6)),
-                        bid=round(price - spread / 2, 2),
-                        ask=round(price + spread / 2, 2),
-                    )
-                )
-        return OptionChain(
-            underlying=underlying.upper(), spot=spot, expiry=expiry,
-            lot_size=lot_size(underlying), as_of=self.as_of, quotes=quotes,
-        )
-
+        return synthetic_chain(underlying, p["spot"], p["step"], p["vol"],
+                               lot_size(underlying), self.as_of,
+                               _next_tuesday(self.as_of.date()), strikes_each_side, self.seed)
 
     def vix(self) -> float | None:
         return self.vix_history(5)[-1]
@@ -138,6 +102,48 @@ class SampleDataProvider:
 
     def fii_dii(self) -> FlowSnapshot | None:
         return FlowSnapshot(date=self.as_of.date(), fii_net=1_250.0, dii_net=-400.0)
+
+
+def synthetic_chain(underlying: str, spot: float, step: float, base_vol: float, lot: int,
+                    as_of: datetime, expiry: date, strikes_each_side: int = 15,
+                    seed: int = 7) -> OptionChain:
+    """Black-Scholes-priced chain with OI humps a few strikes out of the money."""
+    rng = np.random.default_rng(seed + 1)
+    t = max((expiry - as_of.date()).days, 0.5) / 365
+    atm = round(spot / step) * step
+    quotes = []
+    for k in range(-strikes_each_side, strikes_each_side + 1):
+        strike = atm + k * step
+        moneyness = (strike - spot) / spot
+        for opt in ("CE", "PE"):
+            vol = base_vol * (1 + 1.5 * moneyness**2 * 100) + (0.01 if opt == "PE" else 0)
+            price = max(bs_price(spot, strike, t, vol, opt), 0.05)
+            # OI peaks at round strikes a little OTM on each side.
+            otm = (strike - spot) if opt == "CE" else (spot - strike)
+            oi = 2e6 * np.exp(-(((otm - 3 * step) / (6 * step)) ** 2)) if otm > 0 else 3e5
+            oi *= 1.6 if strike % (step * 10) == 0 else 1.0
+            oi *= 1.15 if opt == "PE" else 1.0
+            spread = max(0.05, price * 0.004)
+            quotes.append(
+                OptionQuote(
+                    strike=strike,
+                    option_type=opt,
+                    tradingsymbol=f"{underlying}{expiry:%y%b}{strike:g}{opt}".upper(),
+                    last_price=round(price, 2),
+                    oi=round(oi),
+                    oi_change=round(oi * rng.normal(0.08 if opt == "PE" else 0.03, 0.05)),
+                    # Puts cheapening while OI rises (put writing), calls firming.
+                    price_change=round(price * rng.normal(-0.08 if opt == "PE" else 0.04,
+                                                          0.03), 2),
+                    volume=round(oi * rng.uniform(2, 6)),
+                    bid=round(price - spread / 2, 2),
+                    ask=round(price + spread / 2, 2),
+                )
+            )
+    return OptionChain(
+        underlying=underlying.upper(), spot=spot, expiry=expiry,
+        lot_size=lot, as_of=as_of, quotes=quotes,
+    )
 
 
 def _next_tuesday(d: date) -> date:

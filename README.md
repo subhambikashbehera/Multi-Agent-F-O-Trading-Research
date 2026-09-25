@@ -20,6 +20,15 @@ position.
 | 7 | Paper trading | **Built.** Approved ideas become paper positions, marked on every run and settled at expiry. Every signal and decision is logged with the paper outcome of approved ideas (`fno-research review log`). Next: run it for 2–4 weeks. |
 | 8 | Live with human review | Not started, deliberately. |
 
+## Two desks
+
+The dashboard has a switch across the top:
+
+- **F&O**: index options research on NIFTY, BANKNIFTY, FINNIFTY and MIDCPNIFTY (everything
+  below).
+- **Swing trading**: a scanner for a stock universe, **NIFTY LargeMidcap 250** by default,
+  trading both ways over days to a few weeks. See [Swing desk](#swing-desk).
+
 ## How it works
 
 ```
@@ -74,6 +83,56 @@ pytest                                         # offline test suite
 
 Run it on a schedule during market hours (for example every 15 minutes) to build the feature
 store and mark paper positions. Keep the frequency modest; the NSE client caches and throttles.
+
+## Swing desk
+
+```bash
+fno-research swing scan                  # score the universe, queue ideas (free data)
+fno-research swing scan --source sample  # 40 synthetic DEMO stocks, works offline
+fno-research swing list                  # ideas waiting for review
+fno-research swing approve <id>          # opens a paper position
+fno-research swing positions
+```
+
+Each stock is scored by the same four technical agents as the F&O desk, plus **relative
+strength** against NIFTY (60 and 20 sessions). The strongest candidates on each side, and
+every stock you hold, also get a **news** read: Claude scores the company's Google News
+headlines (needs `ANTHROPIC_API_KEY`).
+
+**Long** (delivery buy): above the 200-day EMA, score ≥ 0.35, liquid (≥ ₹10 cr/day). The
+stop is 2 ATR or just under the 10-day swing low, whichever is tighter, but never closer
+than 1 ATR. The target is 2R, with a 15-session time stop. Quantity is sized so hitting the
+stop costs 1% of swing capital, and capped at 20% of capital per stock.
+
+**Short** (bearish): below the 200-day EMA and score ≤ −0.35. Cash shorts can't be held
+overnight in India, so the bearish trade is a **bear put spread on the stock's options**,
+for stocks in F&O only. Stock futures were ruled out: at the ₹15 lakh minimum contract
+size, one lot risks far more than a small account's budget. Spreads start 4 strikes wide
+and narrow to fit the budget. Even so, **one lot of a stock-option spread usually risks
+₹5–15k**, so at ₹5L capital and 1% risk most shorts are blocked. Raise capital or
+risk % to take them; the idea card shows the exact numbers.
+
+**Exit alerts**: a held long whose score turns bearish, or whose news is strongly negative,
+raises an alert with a Close button. The same applies in reverse to held put spreads.
+
+**Portfolio rules**: at most 5 open positions and 2 per industry, no doubling up, and the
+kill switch shared with the F&O desk (the daily loss counts both books). Ideas from both
+sides compete for the slots by signal strength.
+
+**Paper fills**: on each scan a long position walks through every new daily bar. It
+checks the stop first (a gap below it fills at the open), then the target, then the time
+stop. A bar that touches both stop and target counts as a stop, the conservative reading
+of daily data. Put spreads are re-priced from the stock's option chain.
+
+Data comes free from Yahoo (`SYMBOL.NS` daily bars, cached once per day) and NSE
+(constituents, F&O lot sizes, stock option chains, ban list). A first live scan of 250
+stocks takes a few minutes; later scans the same day use the cache. Pick another universe
+with `FNO_SWING_UNIVERSE` (for example `nifty200` or `nifty500`) or from the dashboard. If
+the constituent download fails, save the CSV from niftyindices.com to
+`data/cache/universe_<name>.csv`.
+
+Not covered yet: earnings dates (a stop can gap on results), corporate actions (Yahoo
+adjusts prices, but your paper entry isn't), and brokerage/STT in paper P&L.
 
 ## Backtesting
 

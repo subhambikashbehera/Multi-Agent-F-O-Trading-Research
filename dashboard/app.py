@@ -19,7 +19,7 @@ from fno_research.models import Direction, OptionChain, ResearchReport, TradeIde
 from fno_research.paper import PaperBook
 from fno_research.review import BLOCKED, NO_TRADE, PENDING, ReviewQueue, decision_log
 
-st.set_page_config(page_title="F&O Research Desk", layout="wide")
+st.set_page_config(page_title="Research Desk", layout="wide")
 
 DIRECTION_COLOR = {Direction.BULLISH: "green", Direction.BEARISH: "red", Direction.NEUTRAL: "gray"}
 AGENT_LABEL = {
@@ -399,7 +399,7 @@ def backtest_tab(underlying: str, source: str) -> None:
                    "store once live runs have built up history.")
 
 
-def main() -> None:
+def fno_desk() -> None:
     settings, underlying, source = sidebar()
     queue = get_queue(str(settings.db_path))
     book = get_book(str(settings.db_path))
@@ -414,6 +414,18 @@ def main() -> None:
         paper_tab(settings, book)
     with backtest:
         backtest_tab(underlying, source)
+
+
+def main() -> None:
+    # Desk switch across the top; each desk brings its own sidebar and tabs.
+    desk = st.segmented_control("Desk", ["F&O", "Swing trading"], default="F&O",
+                                key="desk", label_visibility="collapsed")
+    if desk == "Swing trading":
+        from swing_ui import swing_desk
+
+        swing_desk(Settings())
+    else:
+        fno_desk()
 
 
 main()

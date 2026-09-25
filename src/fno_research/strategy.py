@@ -31,7 +31,8 @@ def _leg(q: OptionQuote, action: str) -> OptionLeg:
 
 def build_idea(chain: OptionChain, view: AggregateSignal,
                options_signal: AgentSignal | None = None,
-               min_width_steps: int = 2, max_width_steps: int = 8) -> TradeIdea | None:
+               min_width_steps: int = 2, max_width_steps: int = 8,
+               default_width: int = 4) -> TradeIdea | None:
     if view.direction == Direction.NEUTRAL:
         return None
 
@@ -45,7 +46,7 @@ def build_idea(chain: OptionChain, view: AggregateSignal,
     # Target the OI wall in the direction of the trade when it's a sensible distance away.
     wall_key = "call_wall" if bullish else "put_wall"
     wall = (options_signal.features.get(wall_key) if options_signal else None)
-    width, at_wall = 4, False
+    width, at_wall = default_width, False
     if isinstance(wall, (int, float)) and wall in strikes:
         steps = (strikes.index(wall) - i) * sign
         if min_width_steps <= steps <= max_width_steps:

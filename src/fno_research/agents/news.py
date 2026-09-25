@@ -29,6 +29,21 @@ plainly when the news carries no real signal; a neutral, low-confidence view is 
 answer."""
 
 
+STOCK_SYSTEM_PROMPT = """\
+You are the news analyst on an Indian equities swing-trading desk. You receive recent \
+headlines about one listed company and judge their likely effect on its share price over \
+the next few days to three weeks.
+
+Weigh what moves a single stock: results and guidance, order wins or losses, management \
+commentary, regulatory or legal action, promoter pledges or selling, block deals, rating \
+changes, and sector news that clearly applies. Headlines about a different company with a \
+similar name are not evidence; ignore them.
+
+score runs from -1 (strongly bearish) to 1 (strongly bullish). confidence runs from 0 to 1 \
+and should be low when headlines are stale, generic, or about something else. A neutral, \
+low-confidence view is a valid answer."""
+
+
 class NewsView(BaseModel):
     score: float
     confidence: float
@@ -42,10 +57,13 @@ class NewsAgent:
     group = "context"
 
     def __init__(self, news: NewsProvider, model: str = "claude-opus-5",
-                 client: anthropic.Anthropic | None = None, effort: str = "medium"):
+                 client: anthropic.Anthropic | None = None, effort: str = "medium",
+                 system_prompt: str = SYSTEM_PROMPT, subject: str = "Index"):
         self.news = news
         self.model = model
         self.effort = effort
+        self.system_prompt = system_prompt
+        self.subject = subject
         self._client = client
 
     @property
@@ -58,8 +76,9 @@ class NewsAgent:
             self._client = anthropic.Anthropic()
         return self._client
 
-    def analyse(self, underlying: str) -> AgentSignal:
-        items = self.news.headlines(underlying)
+    def analyse(self, underlying: str, query: str | None = None) -> AgentSignal:
+        """`query` overrides what the news provider searches for (e.g. a company name)."""
+        items = self.news.headlines(query or underlying)
         if not items:
             return self._neutral("No headlines available.")
         try:
@@ -97,12 +116,12 @@ class NewsAgent:
             if item.summary:
                 line += f" — {item.summary}"
             lines.append(line)
-        prompt = f"Index: {underlying}\n\nHeadlines:\n" + "\n".join(lines)
+        prompt = f"{self.subject}: {underlying}\n\nHeadlines:\n" + "\n".join(lines)
 
         response = self.client.beta.messages.parse(
             model=self.model,
             max_tokens=16000,
-            system=SYSTEM_PROMPT,
+            system=self.system_prompt,
             thinking={"type": "adaptive"},
             output_config={"effort": self.effort},
             # On a safety decline, the API retries on a fallback model in the same call.
